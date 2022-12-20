@@ -8,6 +8,7 @@ LOG8415: Final Project
 # Requirements
 
 1. `final-project.pem`
+2. In the AWS security group, add an inbound rule for port 1186
 
 # Set right permissions for the `.pem` file
 

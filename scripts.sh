@@ -5,11 +5,15 @@ set -e
 username="ubuntu"
 pem_path="final-project.pem"
 
-standalone_ip="44.211.224.215"
-master_ip="52.91.93.213"
-slave1_ip="54.162.216.13"
-slave2_ip="3.88.221.192"
-slave3_ip="3.85.44.53"
+standalone_ip="52.90.91.135"
+master_ip="23.23.38.137"
+slave1_ip="34.228.55.223"
+slave2_ip="54.209.182.210"
+slave3_ip="34.229.81.60"
+master_ip_internal="ip-172-31-17-89.ec2.internal"
+slave1_ip_internal="ip-172-31-21-198.ec2.internal"
+slave2_ip_internal="ip-172-31-18-51.ec2.internal"
+slave3_ip_internal="ip-172-31-26-36.ec2.internal"
 
 set_vm_address() {
   vm_name=$1
@@ -23,7 +27,7 @@ set_vm_address() {
   vm_address="${!varname}"
 }
 
-connect() {
+run_on_vm() {
   if [ -z "$pem_path" ] || [ -z "$username" ] || [ -z "$vm_address" ]; then
     echo "Missing arguments"
     exit 1
@@ -51,19 +55,19 @@ function install_mysql_cluster() {
 
   echo "1. Common Steps for all Nodes"
   copy_to_vm "resources/mysqlc.sh" "mysqlc.sh"
-  connect "mkdir -p /opt/mysqlcluster/home && \
-      cd /opt/mysqlcluster/home && \
-      wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.2/mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
-      tar xvf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
-      ln -sf mysql-cluster-gpl-7.2.1-linux2.6-x86_64 mysqlc && \
-      rm -rf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
-      mv /home/ubuntu/mysqlc.sh /etc/profile.d/mysqlc.sh
-      "
+  run_on_vm "mkdir -p /opt/mysqlcluster/home && \
+    cd /opt/mysqlcluster/home && \
+    wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.2/mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
+    tar xvf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
+    ln -sf mysql-cluster-gpl-7.2.1-linux2.6-x86_64 mysqlc && \
+    rm -rf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
+    mv /home/ubuntu/mysqlc.sh /etc/profile.d/mysqlc.sh
+    "
 
   echo "2. Install libncurses5"
-  connect "apt-get update && \
-      apt-get -y install libncurses5
-      "
+  run_on_vm "apt-get update && \
+    apt-get -y install libncurses5
+    "
 
   if [ "$vm_name" = "master" ]; then
     echo "----- SQL/Mgmt Node specific steps -----"
@@ -77,7 +81,7 @@ port=3306"
 
     config_ini="
 [ndb_mgmd]
-hostname=ip-172-31-17-89.ec2.internal
+hostname=$master_ip_internal
 datadir=/opt/mysqlcluster/deploy/ndb_data
 nodeid=1
 
@@ -86,22 +90,22 @@ noofreplicas=3
 datadir=/opt/mysqlcluster/deploy/ndb_data
 
 [ndbd]
-hostname=$slave1_ip
+hostname=$slave1_ip_internal
 nodeid=3
 
 [ndbd]
-hostname=$slave2_ip
+hostname=$slave2_ip_internal
 nodeid=4
 
 [ndbd]
-hostname=$slave3_ip
+hostname=$slave3_ip_internal
 nodeid=5
 
 [mysqld]
 nodeid=50"
 
     echo "1. Create the Deployment Directory and Setup Config Files"
-    connect "mkdir -p /opt/mysqlcluster/deploy && \
+    run_on_vm "mkdir -p /opt/mysqlcluster/deploy && \
       cd /opt/mysqlcluster/deploy && \
       mkdir -p conf && \
       mkdir -p mysqld_data && \
@@ -112,29 +116,41 @@ nodeid=50"
       "
 
     echo "2. Initialize the Database"
-    connect "cd /opt/mysqlcluster/home/mysqlc && \
+    run_on_vm "cd /opt/mysqlcluster/home/mysqlc && \
       scripts/mysql_install_db --no-defaults --datadir=/opt/mysqlcluster/deploy/mysqld_data
       "
     echo "3. Start management node"
-    connect "source /etc/profile.d/mysqlc.sh && \
+    run_on_vm "source /etc/profile.d/mysqlc.sh && \
       mkdir -p /usr/local/mysql/mysql-cluster && \
       /opt/mysqlcluster/home/mysqlc/bin/ndb_mgmd -f /opt/mysqlcluster/deploy/conf/config.ini --initial --configdir=/opt/mysqlcluster/deploy/conf/ --ndb-nodeid=1
       "
+  else
+    echo "----- Slave specific steps -----"
+    run_on_vm "source /etc/profile.d/mysqlc.sh && \
+      mkdir -p /opt/mysqlcluster/deploy/ndb_data && \
+      ndbd -c \"$master_ip_internal\":1186
+      "
   fi
-
 }
 
-while getopts 'c:i:' flag; do
+while getopts 'c:i:m' flag; do
   case "${flag}" in
   c)
     # Connect to the VM in ssh
     set_vm_address "${OPTARG}"
-    connect ""
+    run_on_vm ""
     ;;
   i)
     # Install MySQL Cluster
     set_vm_address "${OPTARG}"
     install_mysql_cluster
+    ;;
+  m)
+    # Run `ndb_mgm` on the master
+    set_vm_address master
+    run_on_vm "source /etc/profile.d/mysqlc.sh  && \
+      ndb_mgm
+      "
     ;;
   *) ;;
   esac
