@@ -1,31 +1,33 @@
 #!/bin/bash
 
-set -e
-
 username="ubuntu"
 pem_path="final-project.pem"
 
-standalone_ip="44.201.156.178"
-master_ip="54.91.243.233"
-slave1_ip="54.226.24.9"
-slave2_ip="3.91.46.155"
-slave3_ip="100.26.48.3"
-master_ip_internal="ip-172-31-17-89.ec2.internal"
-slave1_ip_internal="ip-172-31-21-198.ec2.internal"
-slave2_ip_internal="ip-172-31-18-51.ec2.internal"
-slave3_ip_internal="ip-172-31-26-36.ec2.internal"
+standalone_ip="3.91.252.24"
+master_ip="44.211.78.92"
+slave1_ip="3.92.133.161"
+slave2_ip="44.201.184.43"
+slave3_ip="44.202.253.40"
+master_ip_internal="ip-172-31-80-128.ec2.internal"
+slave1_ip_internal="ip-172-31-91-242.ec2.internal"
+slave2_ip_internal="ip-172-31-89-76.ec2.internal"
+slave3_ip_internal="ip-172-31-95-222.ec2.internal"
 
-set_vm_address() {
-  vm_name=$1
+# https://www.digitalocean.com/community/tutorials/how-to-create-a-multi-node-mysql-cluster-on-ubuntu-18-04#prerequisites
 
-  if [ -z "$vm_name" ]; then
-    echo "Missing arguments"
-    exit 1
-  fi
+vm_name="$1"
+command="$2"
+shift
+shift
+args="$@"
 
-  varname="${vm_name}_ip"
-  vm_address="${!varname}"
-}
+if [ -z "$vm_name" ]; then
+  echo "Missing arguments"
+  exit 1
+fi
+
+varname="${vm_name}_ip"
+vm_address="${!varname}"
 
 run_on_vm() {
   if [ -z "$pem_path" ] || [ -z "$username" ] || [ -z "$vm_address" ]; then
@@ -34,102 +36,119 @@ run_on_vm() {
   fi
 
   if [ ! -z "$1" ]; then
-    command="sudo bash -c \"source /home/ubuntu/.profile && set -e && $1\""
+    command="set -e && $1"
   fi
 
   ssh -i "$pem_path" "$username"@"$vm_address" "$command"
 }
 
-copy_to_vm() {
-  if [ -z "$pem_path" ] || [ -z "$username" ] || [ -z "$vm_address" ]; then
-    echo "Missing arguments"
-    exit 1
-  fi
-
-  scp -i "$pem_path" "$1" "$username"@"$vm_address":"$2"
-}
-
-install_mysql_cluster_dependencies() {
-  copy_to_vm "resources/mysqlc.sh" "mysqlc.sh"
-  run_on_vm "mkdir -p /opt/mysqlcluster/home && \
-      cd /opt/mysqlcluster/home && \
-      wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.2/mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
-      tar xvf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
-      ln -sf mysql-cluster-gpl-7.2.1-linux2.6-x86_64 mysqlc && \
-      rm -rf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
-      mv /home/ubuntu/mysqlc.sh /etc/profile.d/mysqlc.sh
-      "
-
-  run_on_vm "echo '[[ -f \"/etc/profile.d/mysqlc.sh\" ]] && source /etc/profile.d/mysqlc.sh' >> /home/ubuntu/.profile"
-
-  echo "2. Install libncurses5"
-  run_on_vm "apt-get update && \
-      apt-get -y install libncurses5 sysbench
-      "
-}
-
-# https://stansantiago.wordpress.com/2012/01/04/installing-mysql-cluster-on-ec2/
-install_mysql_cluster() {
-  echo "Installing MySQL Cluster on $vm_name"
-
-  if [ "$vm_name" = "master" ]; then
-    echo "----- SQL/Mgmt Node specific steps -----"
-
-    my_cfg="
-[mysqld]
-ndbcluster
-datadir=/opt/mysqlcluster/deploy/mysqld_data
-basedir=/opt/mysqlcluster/home/mysqlc
-port=3306"
-
-    config_ini="
-[ndb_mgmd]
-hostname=$master_ip_internal
-datadir=/opt/mysqlcluster/deploy/ndb_data
-nodeid=1
-
+config_ini="
 [ndbd default]
-noofreplicas=3
-datadir=/opt/mysqlcluster/deploy/ndb_data
+# Options affecting ndbd processes on all data nodes:
+NoOfReplicas=3	# Number of replicas
+
+[ndb_mgmd]
+# Management process options:
+hostname=$master_ip_internal # Hostname of the manager
+datadir=/var/lib/mysql-cluster 	# Directory for the log files
 
 [ndbd]
-hostname=$slave1_ip_internal
-nodeid=3
+hostname=$slave1_ip_internal # Hostname/IP of the first data node
+NodeId=2			# Node ID for this data node
+datadir=/usr/local/mysql/data	# Remote directory for the data files
 
 [ndbd]
-hostname=$slave2_ip_internal
-nodeid=4
+hostname=$slave2_ip_internal # Hostname/IP of the second data node
+NodeId=3			# Node ID for this data node
+datadir=/usr/local/mysql/data	# Remote directory for the data files
 
 [ndbd]
-hostname=$slave3_ip_internal
-nodeid=5
+hostname=$slave3_ip_internal # Hostname/IP of the second data node
+NodeId=4			# Node ID for this data node
+datadir=/usr/local/mysql/data	# Remote directory for the data files
 
 [mysqld]
-nodeid=50"
+# SQL node options:
+hostname=$master_ip_internal # In our case the MySQL server/client is on the same Droplet as the cluster manager
+"
 
-    echo "1. Create the Deployment Directory and Setup Config Files"
-    run_on_vm "mkdir -p /opt/mysqlcluster/deploy && \
-      cd /opt/mysqlcluster/deploy && \
-      mkdir -p conf && \
-      mkdir -p mysqld_data && \
-      mkdir -p ndb_data && \
-      cd conf && \
-      echo -e '$my_cfg' > my.cnf && \
-      echo -e '$config_ini' > config.ini
-      "
+my_cnf="
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring=$master_ip_internal  # location of cluster manager
+"
 
-    echo "2. Initialize the Database"
-    run_on_vm "cd /opt/mysqlcluster/home/mysqlc && \
-      scripts/mysql_install_db --no-defaults --datadir=/opt/mysqlcluster/deploy/mysqld_data
-      "
-    echo "3. Start management node"
-    run_on_vm "mkdir -p /usr/local/mysql/mysql-cluster && \
-      /opt/mysqlcluster/home/mysqlc/bin/ndb_mgmd -f /opt/mysqlcluster/deploy/conf/config.ini --initial --configdir=/opt/mysqlcluster/deploy/conf/ --ndb-nodeid=1
-      "
+server_my_cnf="
+!includedir /etc/mysql/conf.d/
+!includedir /etc/mysql/mysql.conf.d/
+
+[mysqld]
+# Options for mysqld process:
+ndbcluster                      # run NDB storage engine
+
+[mysql_cluster]
+# Options for NDB Cluster processes:
+ndb-connectstring=$master_ip_internal  # location of management server
+"
+
+connect() {
+  run_on_vm ""
+}
+
+dependencies() {
+  if [ "$vm_name" = "master" ]; then
+    if [ "$args" != "server" ]; then
+      run_on_vm "cd ~ && \
+        sudo apt update && \
+        sudo apt install -y libtinfo5 sysbench && \
+        wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster-community-management-server_7.6.6-1ubuntu18.04_amd64.deb && \
+        sudo dpkg -i mysql-cluster-community-management-server_7.6.6-1ubuntu18.04_amd64.deb && \
+        sudo mkdir -p /var/lib/mysql-cluster
+        "
+    else
+      # Server deps
+      run_on_vm "cd ~ && \
+        wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar && \
+        mkdir -p install && \
+        tar -xvf mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar -C install/ && \
+        cd install && \
+        sudo apt update && \
+        sudo apt install -y libaio1 libmecab2 libncurses5 && \
+        sudo dpkg -i mysql-common_7.6.6-1ubuntu18.04_amd64.deb && \
+        sudo dpkg -i mysql-cluster-community-client_7.6.6-1ubuntu18.04_amd64.deb && \
+        sudo dpkg -i mysql-client_7.6.6-1ubuntu18.04_amd64.deb && \
+        sudo dpkg -i mysql-cluster-community-server_7.6.6-1ubuntu18.04_amd64.deb && \
+        sudo dpkg -i mysql-server_7.6.6-1ubuntu18.04_amd64.deb
+        "
+    fi
   else
-    echo "----- Slave specific steps -----"
-    run_on_vm "mkdir -p /opt/mysqlcluster/deploy/ndb_data && \
-      ndbd -c \"$master_ip_internal\":1186
+    run_on_vm "
+      cd ~ && \
+      wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster-community-data-node_7.6.6-1ubuntu18.04_amd64.deb && \
+      sudo apt update && \
+      sudo apt install -y libclass-methodmaker-perl && \
+      sudo dpkg -i mysql-cluster-community-data-node_7.6.6-1ubuntu18.04_amd64.deb
+      "
+  fi
+}
+
+install() {
+  if [ "$vm_name" = "master" ]; then
+    if [ "$args" != "server" ]; then
+      run_on_vm "
+        echo -e '$config_ini' | sudo tee /var/lib/mysql-cluster/config.ini
+        "
+    else
+      run_on_vm "
+        echo -e '$server_my_cnf' | sudo tee /etc/mysql/my.cnf && \
+        sudo chmod 644 /etc/mysql/my.cnf && \
+        sudo pkill -f mysql
+        "
+    fi
+  else
+    run_on_vm "
+      echo -e '$my_cnf' | sudo tee /etc/my.cnf && \
+      sudo mkdir -p /usr/local/mysql/data
       "
   fi
 }
@@ -140,38 +159,44 @@ install_sakila() {
     "
 }
 
-while getopts 'c:d:i:s:fmg' flag; do
-  case "${flag}" in
-  c)
-    # Connect to the VM in ssh
-    set_vm_address "${OPTARG}"
-    run_on_vm ""
-    ;;
-  d)
-    # Install dependencies on the VM
-    set_vm_address "${OPTARG}"
-    install_mysql_cluster_dependencies
-    ;;
-  i)
-    # Install MySQL Cluster
-    set_vm_address "${OPTARG}"
-    install_mysql_cluster
-    ;;
-  f)
-    # Final setup steps for master
-    set_vm_address master
-    run_on_vm "mysqld --defaults-file=/opt/mysqlcluster/deploy/conf/my.cnf --user=root &"
-    ;;
-  m)
-    # Run `ndb_mgm` on the master
-    set_vm_address master
-    run_on_vm "ndb_mgm"
-    ;;
-  s)
-    # Install Sakila on the VM
-    set_vm_address "${OPTARG}"
-    install_sakila
-    ;;
-  *) ;;
-  esac
-done
+install_sysbench() {
+  run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --mysql-db=sakila --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua prepare"
+}
+
+sysbench() {
+  run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --num-threads=6 --max-time=60 --max-requests=0 --mysql-db=sakila --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua run"
+}
+
+start_ndb() {
+  if [ "$vm_name" = "master" ]; then
+    run_on_vm "sudo /usr/sbin/ndb_mgmd -f /var/lib/mysql-cluster/config.ini"
+  else
+    run_on_vm "sudo /usr/sbin/ndbd"
+  fi
+}
+
+stop_ndb() {
+  if [ "$vm_name" = "master" ]; then
+    run_on_vm "sudo pkill -f ndb_mgmd"
+  else
+    run_on_vm "sudo pkill -f ndbd"
+  fi
+}
+
+start_mysql() {
+  run_on_vm "sudo systemctl start mysql"
+}
+
+stop_mysql() {
+  run_on_vm "sudo pkill -f mysql"
+}
+
+status() {
+  run_on_vm "sudo systemctl status mysql"
+}
+
+manage() {
+  run_on_vm "/usr/bin/ndb_mgm"
+}
+
+eval "$command"
