@@ -1,0 +1,39 @@
+ubuntu@ip-172-31-89-182:~$ sysbench --table-size=1000000 --num-threads=6 --max-time=60 --max-requests=0 --mysql-db=dbtest --mysql-user=root --mysql-password="" /usr/share/sysbench/oltp_read_only.lua run
+WARNING: --num-threads is deprecated, use --threads instead
+WARNING: --max-time is deprecated, use --time instead
+sysbench 1.0.20 (using system LuaJIT 2.1.0-beta3)
+
+Running the test with following options:
+Number of threads: 6
+Initializing random number generator from current time
+
+
+Initializing worker threads...
+
+Threads started!
+
+SQL statistics:
+    queries performed:
+        read:                            475888
+        write:                           0
+        other:                           67984
+        total:                           543872
+    transactions:                        33992  (566.47 per sec.)
+    queries:                             543872 (9063.45 per sec.)
+    ignored errors:                      0      (0.00 per sec.)
+    reconnects:                          0      (0.00 per sec.)
+
+General statistics:
+    total time:                          60.0052s
+    total number of events:              33992
+
+Latency (ms):
+         min:                                    6.72
+         avg:                                   10.59
+         max:                                   70.01
+         95th percentile:                       11.45
+         sum:                               359908.18
+
+Threads fairness:
+    events (avg/stddev):           5665.3333/21.49
+    execution time (avg/stddev):   59.9847/0.00

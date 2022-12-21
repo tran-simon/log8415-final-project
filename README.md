@@ -8,7 +8,7 @@ LOG8415: Final Project
 # Requirements
 
 1. `final-project.pem`
-2. In the AWS security group, add an inbound rule for port 1186
+2. In the AWS security group, add an inbound rule for port 1186, 3306 and for the range of ports  30000 to 65535
 
 # Set right permissions for the `.pem` file
 
@@ -62,6 +62,12 @@ Then install [Sakila](#sakila)
 ./script.sh -f
 ```
 
+You may stop mysqld using
+```bash
+mysqladmin -u root -p shutdown
+```
+
+
 Then, you need to secure the MySQL installation
 
 ```bash
@@ -92,3 +98,28 @@ exit;
 ```
 
 Repeat the steps for the master VM
+
+## Benchmark
+https://www.jamescoyle.net/how-to/1131-benchmark-mysql-server-performance-with-sysbench
+
+```mysql
+create database dbtest;
+```
+
+```bash
+sysbench --table-size=1000000 --mysql-db=dbtest --mysql-user=root --mysql-password="" /usr/share/sysbench/oltp_read_only.lua prepare
+```
+
+```mysql
+use dbtest;
+show tables;
+SELECT COUNT(*) FROM sbtest1;
+```
+
+```bash
+sysbench --table-size=1000000 --num-threads=6 --max-time=60 --max-requests=0 --mysql-db=dbtest --mysql-user=root --mysql-password="" /usr/share/sysbench/oltp_read_only.lua run
+```
+
+```mysql
+drop database dbtest;
+```

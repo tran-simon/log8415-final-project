@@ -34,7 +34,7 @@ run_on_vm() {
   fi
 
   if [ ! -z "$1" ]; then
-    command="sudo bash -c \"set -e && $1\""
+    command="sudo bash -c \"source /home/ubuntu/.profile && set -e && $1\""
   fi
 
   ssh -i "$pem_path" "$username"@"$vm_address" "$command"
@@ -50,8 +50,8 @@ copy_to_vm() {
 }
 
 install_mysql_cluster_dependencies() {
-    copy_to_vm "resources/mysqlc.sh" "mysqlc.sh"
-    run_on_vm "mkdir -p /opt/mysqlcluster/home && \
+  copy_to_vm "resources/mysqlc.sh" "mysqlc.sh"
+  run_on_vm "mkdir -p /opt/mysqlcluster/home && \
       cd /opt/mysqlcluster/home && \
       wget http://dev.mysql.com/get/Downloads/MySQL-Cluster-7.2/mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
       tar xvf mysql-cluster-gpl-7.2.1-linux2.6-x86_64.tar.gz && \
@@ -60,9 +60,11 @@ install_mysql_cluster_dependencies() {
       mv /home/ubuntu/mysqlc.sh /etc/profile.d/mysqlc.sh
       "
 
-    echo "2. Install libncurses5"
-    run_on_vm "apt-get update && \
-      apt-get -y install libncurses5
+  run_on_vm "echo '[[ -f \"/etc/profile.d/mysqlc.sh\" ]] && source /etc/profile.d/mysqlc.sh' >> /home/ubuntu/.profile"
+
+  echo "2. Install libncurses5"
+  run_on_vm "apt-get update && \
+      apt-get -y install libncurses5 sysbench
       "
 }
 
@@ -121,14 +123,12 @@ nodeid=50"
       scripts/mysql_install_db --no-defaults --datadir=/opt/mysqlcluster/deploy/mysqld_data
       "
     echo "3. Start management node"
-    run_on_vm "source /etc/profile.d/mysqlc.sh && \
-      mkdir -p /usr/local/mysql/mysql-cluster && \
+    run_on_vm "mkdir -p /usr/local/mysql/mysql-cluster && \
       /opt/mysqlcluster/home/mysqlc/bin/ndb_mgmd -f /opt/mysqlcluster/deploy/conf/config.ini --initial --configdir=/opt/mysqlcluster/deploy/conf/ --ndb-nodeid=1
       "
   else
     echo "----- Slave specific steps -----"
-    run_on_vm "source /etc/profile.d/mysqlc.sh && \
-      mkdir -p /opt/mysqlcluster/deploy/ndb_data && \
+    run_on_vm "mkdir -p /opt/mysqlcluster/deploy/ndb_data && \
       ndbd -c \"$master_ip_internal\":1186
       "
   fi
@@ -140,7 +140,7 @@ install_sakila() {
     "
 }
 
-while getopts 'c:d:i:s:fm' flag; do
+while getopts 'c:d:i:s:fmg' flag; do
   case "${flag}" in
   c)
     # Connect to the VM in ssh
@@ -160,16 +160,12 @@ while getopts 'c:d:i:s:fm' flag; do
   f)
     # Final setup steps for master
     set_vm_address master
-    run_on_vm "source /etc/profile.d/mysqlc.sh  && \
-      mysqld --defaults-file=/opt/mysqlcluster/deploy/conf/my.cnf --user=root
-      "
+    run_on_vm "mysqld --defaults-file=/opt/mysqlcluster/deploy/conf/my.cnf --user=root &"
     ;;
   m)
     # Run `ndb_mgm` on the master
     set_vm_address master
-    run_on_vm "source /etc/profile.d/mysqlc.sh  && \
-      ndb_mgm
-      "
+    run_on_vm "ndb_mgm"
     ;;
   s)
     # Install Sakila on the VM
