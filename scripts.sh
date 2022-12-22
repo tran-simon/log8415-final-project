@@ -3,15 +3,17 @@
 username="ubuntu"
 pem_path="final-project.pem"
 
-standalone_ip="3.91.252.24"
-master_ip="44.211.78.92"
-slave1_ip="3.92.133.161"
-slave2_ip="44.201.184.43"
-slave3_ip="44.202.253.40"
+standalone_ip="44.208.24.225"
+proxy_ip="44.204.173.33"
+master_ip="34.203.246.121"
+slave1_ip="18.234.166.185"
+slave2_ip="44.204.34.207"
+slave3_ip="44.201.100.109"
 master_ip_internal="ip-172-31-80-128.ec2.internal"
 slave1_ip_internal="ip-172-31-91-242.ec2.internal"
 slave2_ip_internal="ip-172-31-89-76.ec2.internal"
 slave3_ip_internal="ip-172-31-95-222.ec2.internal"
+proxy_ip_internal="ip-172-31-80-19.ec2.internal"
 
 # https://www.digitalocean.com/community/tutorials/how-to-create-a-multi-node-mysql-cluster-on-ubuntu-18-04#prerequisites
 
@@ -36,10 +38,14 @@ run_on_vm() {
   fi
 
   if [ ! -z "$1" ]; then
-    command="set -e && $1"
+    ssh_command="set -e && $1"
   fi
 
-  ssh -i "$pem_path" "$username"@"$vm_address" "$command"
+  ssh -i "$pem_path" "$username"@"$vm_address" "$ssh_command"
+}
+
+run_sql_on_vm() {
+  run_on_vm "sudo mysql -u root -e \"$1\""
 }
 
 config_ini="
@@ -92,12 +98,33 @@ ndb-connectstring=$master_ip_internal  # location of management server
 "
 
 connect() {
-  run_on_vm ""
+  run_on_vm "$args"
+}
+
+sql() {
+  run_sql_on_vm "$args"
 }
 
 dependencies() {
-  if [ "$vm_name" = "master" ]; then
-    if [ "$args" != "server" ]; then
+  case $args in
+  server)
+    # Server deps
+    run_on_vm "cd ~ && \
+      wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar && \
+      mkdir -p install && \
+      tar -xvf mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar -C install/ && \
+      cd install && \
+      sudo apt update && \
+      sudo apt install -y libaio1 libmecab2 libncurses5 && \
+      sudo dpkg -i mysql-common_7.6.6-1ubuntu18.04_amd64.deb && \
+      sudo dpkg -i mysql-cluster-community-client_7.6.6-1ubuntu18.04_amd64.deb && \
+      sudo dpkg -i mysql-client_7.6.6-1ubuntu18.04_amd64.deb && \
+      sudo dpkg -i mysql-cluster-community-server_7.6.6-1ubuntu18.04_amd64.deb && \
+      sudo dpkg -i mysql-server_7.6.6-1ubuntu18.04_amd64.deb
+      "
+    ;;
+  *)
+    if [ "$vm_name" = "master" ]; then
       run_on_vm "cd ~ && \
         sudo apt update && \
         sudo apt install -y libtinfo5 sysbench && \
@@ -106,93 +133,116 @@ dependencies() {
         sudo mkdir -p /var/lib/mysql-cluster
         "
     else
-      # Server deps
-      run_on_vm "cd ~ && \
-        wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar && \
-        mkdir -p install && \
-        tar -xvf mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar -C install/ && \
-        cd install && \
+      run_on_vm "
+        cd ~ && \
+        wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster-community-data-node_7.6.6-1ubuntu18.04_amd64.deb && \
         sudo apt update && \
-        sudo apt install -y libaio1 libmecab2 libncurses5 && \
-        sudo dpkg -i mysql-common_7.6.6-1ubuntu18.04_amd64.deb && \
-        sudo dpkg -i mysql-cluster-community-client_7.6.6-1ubuntu18.04_amd64.deb && \
-        sudo dpkg -i mysql-client_7.6.6-1ubuntu18.04_amd64.deb && \
-        sudo dpkg -i mysql-cluster-community-server_7.6.6-1ubuntu18.04_amd64.deb && \
-        sudo dpkg -i mysql-server_7.6.6-1ubuntu18.04_amd64.deb
+        sudo apt install -y libclass-methodmaker-perl && \
+        sudo dpkg -i mysql-cluster-community-data-node_7.6.6-1ubuntu18.04_amd64.deb
         "
     fi
-  else
-    run_on_vm "
-      cd ~ && \
-      wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster-community-data-node_7.6.6-1ubuntu18.04_amd64.deb && \
-      sudo apt update && \
-      sudo apt install -y libclass-methodmaker-perl && \
-      sudo dpkg -i mysql-cluster-community-data-node_7.6.6-1ubuntu18.04_amd64.deb
-      "
-  fi
+    ;;
+  esac
 }
 
 install() {
-  if [ "$vm_name" = "master" ]; then
-    if [ "$args" != "server" ]; then
+  case $args in
+  server)
+    run_on_vm "
+      echo -e '$server_my_cnf' | sudo tee /etc/mysql/my.cnf && \
+      sudo chmod 644 /etc/mysql/my.cnf && \
+      sudo pkill -f mysql
+      "
+    ;;
+  sakila)
+    run_on_vm "wget https://downloads.mysql.com/docs/sakila-db.tar.gz && \
+    tar xvf sakila-db.tar.gz
+    "
+    run_sql_on_vm "SOURCE sakila-db/sakila-schema.sql;"
+    run_sql_on_vm "SOURCE sakila-db/sakila-data.sql;"
+    ;;
+  sysbench)
+    run_sql_on_vm "CREATE DATABASE IF NOT EXISTS dbtest;"
+    run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --mysql-db=dbtest --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua prepare"
+    ;;
+  *)
+    if [ "$vm_name" = "master" ]; then
       run_on_vm "
         echo -e '$config_ini' | sudo tee /var/lib/mysql-cluster/config.ini
         "
     else
       run_on_vm "
-        echo -e '$server_my_cnf' | sudo tee /etc/mysql/my.cnf && \
-        sudo chmod 644 /etc/mysql/my.cnf && \
-        sudo pkill -f mysql
+        echo -e '$my_cnf' | sudo tee /etc/my.cnf && \
+        sudo mkdir -p /usr/local/mysql/data
         "
     fi
-  else
-    run_on_vm "
-      echo -e '$my_cnf' | sudo tee /etc/my.cnf && \
-      sudo mkdir -p /usr/local/mysql/data
-      "
-  fi
+    ;;
+  esac
 }
 
-install_sakila() {
-  run_on_vm "wget https://downloads.mysql.com/docs/sakila-db.tar.gz && \
-    tar xvf sakila-db.tar.gz
-    "
+start() {
+  case $args in
+  ndb)
+    if [ "$vm_name" = "master" ]; then
+      run_on_vm "sudo /usr/sbin/ndb_mgmd -f /var/lib/mysql-cluster/config.ini"
+    else
+      run_on_vm "sudo /usr/sbin/ndbd"
+    fi
+    ;;
+  mysql)
+    run_on_vm "sudo systemctl restart mysql"
+
+    ;;
+  sysbench)
+    run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --num-threads=6 --max-time=60 --max-requests=0 --mysql-db=dbtest --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua run"
+    ;;
+  *) ;;
+
+  esac
 }
 
-install_sysbench() {
-  run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --mysql-db=sakila --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua prepare"
-}
+stop() {
+  case $args in
+  ndb)
+    if [ "$vm_name" = "master" ]; then
+      run_on_vm "sudo pkill -f ndb_mgmd"
+    else
+      run_on_vm "sudo pkill -f ndbd"
+    fi
+    ;;
+  mysql)
+    if [ "$vm_name" = "master" ]; then
+      run_on_vm "sudo pkill -f ndb_mgmd"
+    else
+      run_on_vm "sudo pkill -f ndbd"
+    fi
+    ;;
 
-sysbench() {
-  run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --num-threads=6 --max-time=60 --max-requests=0 --mysql-db=sakila --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua run"
-}
-
-start_ndb() {
-  if [ "$vm_name" = "master" ]; then
-    run_on_vm "sudo /usr/sbin/ndb_mgmd -f /var/lib/mysql-cluster/config.ini"
-  else
-    run_on_vm "sudo /usr/sbin/ndbd"
-  fi
-}
-
-stop_ndb() {
-  if [ "$vm_name" = "master" ]; then
-    run_on_vm "sudo pkill -f ndb_mgmd"
-  else
-    run_on_vm "sudo pkill -f ndbd"
-  fi
-}
-
-start_mysql() {
-  run_on_vm "sudo systemctl start mysql"
-}
-
-stop_mysql() {
-  run_on_vm "sudo pkill -f mysql"
+  esac
 }
 
 status() {
-  run_on_vm "sudo systemctl status mysql"
+  case $args in
+  mysql)
+    run_on_vm "sudo systemctl status mysql"
+    ;;
+
+  cluster)
+    run_sql_on_vm "SHOW ENGINE NDB STATUS \G"
+    ;;
+
+  ndb)
+    run_on_vm "/usr/bin/ndb_mgm -e show"
+    ;;
+
+  sakila)
+    run_sql_on_vm "USE sakila;
+      SHOW FULL TABLES;
+      "
+    ;;
+
+  *) ;;
+  esac
 }
 
 manage() {
