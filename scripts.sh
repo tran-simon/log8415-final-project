@@ -2,7 +2,9 @@
 
 set -e
 
-set -a; source .env; set +a
+set -a
+source .env
+set +a
 
 username="ubuntu"
 pem_path="final-project.pem"
@@ -40,6 +42,10 @@ run_sql_on_vm() {
   run_on_vm "sudo mysql -u root -e \"$1\""
 }
 
+copy_to_vm() {
+  scp -i "$pem_path" "$1" "$username"@"$vm_address":"$2"
+}
+
 config_ini="
 [ndbd default]
 # Options affecting ndbd processes on all data nodes:
@@ -68,6 +74,8 @@ datadir=/usr/local/mysql/data	# Remote directory for the data files
 [mysqld]
 # SQL node options:
 hostname=$master_ip_internal # In our case the MySQL server/client is on the same Droplet as the cluster manager
+bind-address=0.0.0.0
+skip-grant-tables
 "
 
 my_cnf="
@@ -83,6 +91,8 @@ server_my_cnf="
 [mysqld]
 # Options for mysqld process:
 ndbcluster                      # run NDB storage engine
+bind-address=0.0.0.0
+skip-grant-tables
 
 [mysql_cluster]
 # Options for NDB Cluster processes:
@@ -124,6 +134,8 @@ dependencies() {
         sudo dpkg -i mysql-cluster-community-management-server_7.6.6-1ubuntu18.04_amd64.deb && \
         sudo mkdir -p /var/lib/mysql-cluster
         "
+    elif [ "$vm_name" = "proxy" ]; then
+      run_on_vm "sudo apt update && sudo apt install -y nodejs npm"
     else
       run_on_vm "
         cd ~ && \
@@ -162,6 +174,14 @@ install() {
       run_on_vm "
         echo -e '$config_ini' | sudo tee /var/lib/mysql-cluster/config.ini
         "
+    elif [ "$vm_name" = "proxy" ]; then
+      run_on_vm "rm -rf app final-project.pem && mkdir -p app"
+      copy_to_vm "./proxy/index.js" "app/index.js"
+      copy_to_vm "./proxy/package.json" "app/package.json"
+      copy_to_vm "./proxy/package-lock.json" "app/package-lock.json"
+      copy_to_vm "./.env" ".env"
+      copy_to_vm "./final-project.pem" "final-project.pem"
+      run_on_vm "cd app && npm install"
     else
       run_on_vm "
         echo -e '$my_cnf' | sudo tee /etc/my.cnf && \
@@ -183,13 +203,15 @@ start() {
     ;;
   mysql)
     run_on_vm "sudo systemctl restart mysql"
-
     ;;
   sysbench)
     run_on_vm "sudo sysbench --mysql-socket=\"/var/run/mysqld/mysqld.sock\" --table-size=1000000 --num-threads=6 --max-time=60 --max-requests=0 --mysql-db=dbtest --mysql-user=root --mysql-password=\"\" /usr/share/sysbench/oltp_read_only.lua run"
     ;;
-  *) ;;
-
+  *)
+    if [ "$vm_name" = "proxy" ]; then
+      run_on_vm "cd app && npm start &"
+    fi
+    ;;
   esac
 }
 
@@ -203,13 +225,12 @@ stop() {
     fi
     ;;
   mysql)
-    if [ "$vm_name" = "master" ]; then
-      run_on_vm "sudo pkill -f ndb_mgmd"
-    else
-      run_on_vm "sudo pkill -f ndbd"
-    fi
+    run_on_vm "sudo pkill -f mysql"
     ;;
-
+  * )
+    if [ "$vm_name" = "proxy" ]; then
+      run_on_vm "sudo pkill -f nodemon"
+    fi
   esac
 }
 
@@ -218,22 +239,17 @@ status() {
   mysql)
     run_on_vm "sudo systemctl status mysql"
     ;;
-
   cluster)
     run_sql_on_vm "SHOW ENGINE NDB STATUS \G"
     ;;
-
   ndb)
     run_on_vm "/usr/bin/ndb_mgm -e show"
     ;;
-
   sakila)
     run_sql_on_vm "USE sakila;
       SHOW FULL TABLES;
       "
     ;;
-
-  *) ;;
   esac
 }
 

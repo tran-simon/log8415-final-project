@@ -48,6 +48,12 @@
 ./scripts.sh master sql "SHOW DATABASES;"
 ```
 
+## Stop processes
+```bash
+./scripts.sh master stop ndb
+./scripts.sh master stop mysql
+```
+
 ## Status commands
 
 ```bash
