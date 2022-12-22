@@ -45,7 +45,7 @@
 ./scripts.sh master connect "ps aux"
 
 # To run SQL commands on the VM
-./scripts.sh master sql "SHOW DATABSES;"
+./scripts.sh master sql "SHOW DATABASES;"
 ```
 
 ## Status commands
