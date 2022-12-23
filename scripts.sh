@@ -45,7 +45,7 @@ run_sql_on_vm() {
 
 # Copy a file to the VM via SCP
 copy_to_vm() {
-  scp -i "$pem_path" "$1" "$username"@"$vm_address":"$2"
+  sftp -i "$pem_path" "$username"@"$vm_address" <<< "put \"$1\" \"$2\""
 }
 
 # The MySQL-Cluster `config.ini` configuration file for the master VM
@@ -77,8 +77,6 @@ datadir=/usr/local/mysql/data	# Remote directory for the data files
 [mysqld]
 # SQL node options:
 hostname=$master_ip_internal # In our case the MySQL server/client is on the same Droplet as the cluster manager
-bind-address=0.0.0.0
-skip-grant-tables
 "
 
 # The MySQL `my.cnf` configuration file for the slave VMs
@@ -145,6 +143,8 @@ dependencies() {
         sudo dpkg -i mysql-cluster-community-management-server_7.6.6-1ubuntu18.04_amd64.deb && \
         sudo mkdir -p /var/lib/mysql-cluster
         "
+    elif [ "$vm_name" = "standalone" ]; then
+      run_on_vm "sudo apt update && sudo apt install -y mysql-server sysbench"
     elif [ "$vm_name" = "proxy" ]; then
       # Install the proxy dependencies
       # This installs nodejs and nmap
@@ -242,7 +242,7 @@ start() {
     if [ "$vm_name" = "proxy" ]; then
       # Restart the proxy app
       stop
-      run_on_vm "cd app && npm start &"
+      run_on_vm "cd app && npm start"
     fi
     ;;
   esac
@@ -267,7 +267,7 @@ stop() {
   *)
     if [ "$vm_name" = "proxy" ]; then
       # Stop the proxy app
-      run_on_vm "sudo pkill -f nodemon"
+      curl -s -X POST "${vm_address}:3000/stop" || true
     fi
     ;;
   esac
