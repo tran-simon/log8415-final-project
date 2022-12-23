@@ -15,7 +15,7 @@ vm_name="$1"
 command="$2"
 shift
 shift
-args="$@"
+args=("$@")
 
 if [ -z "$vm_name" ]; then
   echo "Missing arguments"
@@ -31,7 +31,7 @@ run_on_vm() {
     exit 1
   fi
 
-  if [ ! -z "$1" ]; then
+  if [ -n "$1" ]; then
     ssh_command="set -e && $1"
   fi
 
@@ -114,7 +114,7 @@ dependencies() {
     run_on_vm "cd ~ && \
       wget https://dev.mysql.com/get/Downloads/MySQL-Cluster-7.6/mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar && \
       mkdir -p install && \
-      tar -xvf mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar -C install/ && \
+      sudo tar --overwrite -xvf mysql-cluster_7.6.6-1ubuntu18.04_amd64.deb-bundle.tar -C install/ && \
       cd install && \
       sudo apt update && \
       sudo apt install -y libaio1 libmecab2 libncurses5 && \
@@ -135,7 +135,11 @@ dependencies() {
         sudo mkdir -p /var/lib/mysql-cluster
         "
     elif [ "$vm_name" = "proxy" ]; then
-      run_on_vm "sudo apt update && sudo apt install -y nodejs npm"
+      run_on_vm "cd ~ && \
+        curl -sL https://deb.nodesource.com/setup_16.x -o /tmp/nodesource_setup.sh && \
+        sudo bash /tmp/nodesource_setup.sh
+        "
+      run_on_vm "sudo apt update && sudo apt install -y nodejs nmap"
     else
       run_on_vm "
         cd ~ && \
@@ -160,7 +164,7 @@ install() {
     ;;
   sakila)
     run_on_vm "wget https://downloads.mysql.com/docs/sakila-db.tar.gz && \
-    tar xvf sakila-db.tar.gz
+    sudo tar --overwrite -xvf sakila-db.tar.gz
     "
     run_sql_on_vm "SOURCE sakila-db/sakila-schema.sql;"
     run_sql_on_vm "SOURCE sakila-db/sakila-data.sql;"
@@ -209,6 +213,7 @@ start() {
     ;;
   *)
     if [ "$vm_name" = "proxy" ]; then
+      stop
       run_on_vm "cd app && npm start &"
     fi
     ;;
@@ -227,10 +232,11 @@ stop() {
   mysql)
     run_on_vm "sudo pkill -f mysql"
     ;;
-  * )
+  *)
     if [ "$vm_name" = "proxy" ]; then
       run_on_vm "sudo pkill -f nodemon"
     fi
+    ;;
   esac
 }
 
@@ -255,6 +261,13 @@ status() {
 
 manage() {
   run_on_vm "/usr/bin/ndb_mgm"
+}
+
+query() {
+  url="${vm_address}:3000/${args[0]}"
+  query="${args[@]:1}"
+
+  curl -X POST -H "Content-Type: text/plain" -d "$query" "$url"
 }
 
 eval "$command"
