@@ -1,4 +1,16 @@
+LOG8415: Final Project
+======================
+
+***Scaling Databases and Implementing Cloud Patterns***
+
+**Author:** *Simon Tran - 1961278*
+
 # Installation
+
+1. Create 5 t2.micro EC2 instances (for standalone, master, slave1, slave2, slave3)
+2. Create 1 t2.large instance for the proxy server
+3. Add the IP addresses of all the VMs in the `.env` file.
+4. Run the installation commands below
 
 ```bash
 ./scripts.sh master dependencies
@@ -25,7 +37,7 @@
 ./scripts.sh slave3 start ndb
 
 
-# Install Sakil
+# Install Sakila
 ./scripts.sh standalone install sakila
 ./scripts.sh master install sakila
 
@@ -39,7 +51,6 @@
 ```bash
 ./scripts.sh standalone start sysbench
 ./scripts.sh master start sysbench
-
 ```
 
 # Proxy
@@ -56,10 +67,10 @@
 ```bash
 ./scripts.sh proxy query direct-hit "SHOW STATUS;"
 ./scripts.sh proxy query random "SELECT * FROM ACTOR;"
-./scripts.sh proxy query customized "SHOW VARIABLES WHERE Variable_name = 'hostname'"
+./scripts.sh proxy query customized "SHOW DATABASES;"
 
-# To get the queried nodeid
 ./scripts.sh proxy query random "SHOW VARIABLES WHERE Variable_name = 'ndb_nodeid';"
+./scripts.sh proxy query customized "SHOW VARIABLES WHERE Variable_name = 'hostname'"
 ```
 
 # Useful commands

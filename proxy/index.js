@@ -10,12 +10,12 @@ import * as child_process from 'child_process';
 
 const exec = util.promisify(child_process.exec);
 
+// Load the environment variables. Should contain the IP addresses
 dotenv.config({
   path: "../.env"
 });
 
 const app = express();
-
 app.use(express.text());
 
 const privateKey = fs.readFileSync('../final-project.pem')
@@ -27,6 +27,10 @@ const ips = {
   slave3: process.env.slave3_ip
 };
 
+/**
+ * Create a SSH tunnel from the master node to the `vmName` node
+ * @param vmName The name of the VM to create the tunnel to. Can be one of `master`, `slave1`, `slave2`, `slave3`
+ */
 const getTunnel = (vmName) => {
   return tunnel({
     username: 'ubuntu',
@@ -40,6 +44,9 @@ const getTunnel = (vmName) => {
   })
 }
 
+/**
+ * Create a sql connection using the SSH tunnel
+ */
 const getConnection = () => {
   return mysql.createConnection({
     host: 'localhost',
@@ -50,6 +57,12 @@ const getConnection = () => {
   });
 }
 
+/**
+ * Send a SQL query to the `vmName` node
+ * @param vmName The name of the VM to query, `slave1`, `slave2`, `slave3`
+ * @param req Express request object
+ * @param res Express response object
+ */
 const query = (vmName, req, res) => {
   const query = req.body;
   console.info(`Querying "${vmName}" with query:`, query)
@@ -76,11 +89,15 @@ const query = (vmName, req, res) => {
   }
 };
 
+/* Routes */
+
+// The direct-hit route. It can take an optional query parameter to choose the VM to query. Defaults to master.
 app.post('/direct-hit', (req, res) => {
   const vmName = req.query.destination || 'master'
   query(vmName, req, res);
 });
 
+// The random route. It will query a random slave node
 app.post('/random', (req, res) => {
   const vmNames = Object.keys(ips).slice(1);
   const vmName = vmNames[Math.floor(Math.random() * vmNames.length)];
@@ -88,7 +105,14 @@ app.post('/random', (req, res) => {
   query(vmName, req, res);
 });
 
+// The customized route. It will query the node with the lowest ping.
 app.post('/customized', (req, res) => {
+
+  /**
+   * Ping the `vmName` node and returns the latency
+   * @param vmName The name of the VM to query, `slave1`, `slave2`, `slave3`
+   * @return The latency in seconds
+   */
   const ping = async (vmName) => {
     const {stdout, stderr} = await exec(`nmap -T5 -sn ${ips[vmName]}`);
     if (stderr) {
@@ -103,10 +127,13 @@ app.post('/customized', (req, res) => {
       return Promise.reject();
     }
 
-    return {latency: +matches[1], vmName};
+    return +matches[1]
   };
 
-  const pingPromises = Object.keys(ips).map((vmName) => ping(vmName));
+  const pingPromises = Object.keys(ips).map((vmName) => ({
+    vmName,
+    latency: ping(vmName)
+  }));
 
   Promise.all(pingPromises).then((latencies) => {
     let minValue;
@@ -120,6 +147,8 @@ app.post('/customized', (req, res) => {
         minValue = {latency, vmName};
       }
     }
+
+    console.info(`Smallest ping is ${minValue.vmName} with ${minValue.latency}s`)
 
     query(minValue.vmName, req, res);
   }).catch((e) => {
