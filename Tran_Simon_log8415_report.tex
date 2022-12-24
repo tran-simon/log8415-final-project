@@ -1,0 +1,190 @@
+\documentclass[11pt]{article}
+\usepackage{amssymb}
+\usepackage[english]{babel}
+\usepackage{fullpage}
+\usepackage[a4paper,
+    bindingoffset=0.2in,
+    left=0.25in,
+    right=0.25in,
+    top=0.25in,
+    bottom=0.25in,
+    footskip=.25in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{hyperref}
+\makeatletter
+
+\title{LOG8415\\Advanced Concepts of Cloud Computing}
+
+\author{
+    Simon Tran (1961278) \\ \\
+    D\'{e}partement G\'{e}nie Informatique et G\'{e}nie Logiciel \\
+    \'{E}cole Polytechnique de Montr\'{e}al, Qu\'{e}bec, Canada \\
+}
+
+\date{December 23 2022}
+
+\begin{document}
+    \maketitle
+
+
+    \section{Project source code}
+    Source code is available on github: \url{https://github.com/tran-simon/log8415-final-project}
+
+    \section{Project Setup}
+    To install the necessary components, follow these steps.
+    Consult the README.md file for more information.
+
+    \begin{enumerate}
+        \item Create 5 t2.micro EC2 instances (standalone, master, slave1, slave2, and slave3).
+        \item Create 1 t2.large instance for the proxy server.
+        \item Add inbount rules to the security group for the instances so that they accept requests from eachother.
+        \item Add the IP addresses of all the VMs in the .env file using the following command:
+        \begin{verbatim}
+aws ec2 describe-instances --output table --query \
+'Reservations[].Instances[].[Tags[?Key==Name] | [0].Value, PublicIpAddress, PrivateIpAddress]'
+        \end{verbatim}
+        \item Run the installation script:
+        \begin{verbatim}
+./install.sh
+        \end{verbatim}
+    \end{enumerate}
+
+
+    \section{Benchmark}
+    To run the benchmark, use the following commands:
+
+    \begin{verbatim}
+./scripts.sh standalone start sysbench
+./scripts.sh master start sysbench
+    \end{verbatim}
+
+
+    \section{Proxy}
+    To set up and start the proxy server, use the following commands:
+
+    \begin{verbatim}
+./scripts.sh proxy dependencies
+./scripts.sh proxy install
+
+./scripts.sh proxy start
+    \end{verbatim}
+
+    To test some queries using the proxy server, use the following commands:
+
+    \begin{verbatim}
+./scripts.sh proxy query direct-hit "SHOW STATUS;"
+./scripts.sh proxy query random "SELECT * FROM actor;"
+./scripts.sh proxy query customized "SHOW DATABASES;"
+    \end{verbatim}
+
+
+    \section{Useful commands}
+
+    To connect to the VM via Secure Shell (SSH), use the following command:
+
+    \begin{verbatim}
+./scripts.sh master connect
+    \end{verbatim}
+
+    To run commands on the VM using SSH, use the following command:
+
+    \begin{verbatim}
+./scripts.sh master connect "ps aux"
+    \end{verbatim}
+
+    To run SQL commands on the VM, use the following command:
+
+    \begin{verbatim}
+./scripts.sh master sql "SHOW DATABASES;"
+    \end{verbatim}
+
+    To stop processes on the VMs, use the `stop` command
+
+    \begin{verbatim}
+./scripts.sh master stop ndb
+./scripts.sh master stop mysql
+    \end{verbatim}
+
+    To check the status of various components on the master VM, use the following commands:
+
+    \begin{verbatim}
+./scripts.sh master status mysql
+./scripts.sh master status cluster
+./scripts.sh master status ndb
+./scripts.sh master status sakila
+    \end{verbatim}
+
+    To access the NDB Management Console on the master VM, use the following command:
+
+    \begin{verbatim}
+./scripts.sh master manage
+    \end{verbatim}
+
+
+    \section{Benchmark Results}
+    In the `results` folder, there are two text files containing the result of the benchmarks. \\
+
+    We can see that the standalone VM was able to process a total of 33400 transactions at a speed of 556.59 transactions per second. \\
+    There were a total of 534400 queries (8905.52 queries per second). \\
+
+    We can see that the VM cluster was able to process a total of 39227 transactions at a speed of 653.71 transactions per second. \\
+    There were a total of 627632 queries (10459.42 queries per second). \\
+
+    We can conclude that the cluster was able to process about 17\% more transactions and queries. \\
+
+
+    \section{Implementation}
+
+    The `script.sh` file contains various scripts to interact with the VMs.
+    It contains the function to install the dependencies and configure the VMs. \\
+
+    The master node runs the MySQL server and the MySQL NDB Cluster manager. \\
+    The slave nodes run NDB\@.
+    They are configured so that they are read-only copies of the master database. \\
+    Sakila is installed on the master node. \\
+
+    The proxy VM runs a node application that consists of an Express server. \\
+    When it first launches, it creates 4 SSH tunnels, one on port 4000 for the master, one on port 4001 for the slave1, one on port 4002 for the slave2 and one on port 4003 for the slave3. \\
+    This makes it possible to query the slave nodes, because the SSH tunnel forwards the traffic to them. \\
+    We can simply make SQL queries to `localhost:4001` to make a query on the slave1, for example. \\
+    Read queries can be made on any node, but write queries are only sent to the master node, because the slave nodes are read-only. \\
+
+    Then, we have 3 Express routes used to send SQL queries:
+
+    \begin{itemize}
+        \item `/direct-hit`: Queries the master node.
+        You can use the optional `destination` query parameter to chose a slave node instead.
+        \item `/random`: Queries a random slave node
+        \item `/customized`: Pings all nodes to determine the one with the lowest latency using `nmap`.
+        The query will be sent to that one.
+    \end{itemize}
+
+    The body of the HTTP request contains the SQL query. \\
+
+    Here is an example request:
+    \begin{verbatim}
+POST http://54.160.131.212:3000/direct-hit?destination=slave2
+Content-Type: text/plain
+
+SHOW STATUS;
+    \end{verbatim}
+
+    You may use the `query` function in `scripts.sh` to easily run queries:
+    \begin{verbatim}
+./scripts.sh proxy query direct-hit "SHOW STATUS;"
+./scripts.sh proxy query random "SELECT * FROM actor;"
+./scripts.sh proxy query customized "SHOW DATABASES;"
+    \end{verbatim}
+
+    As we use a t2.large instance for the proxy, our application could scale well with lots of users and large requests. \\
+    The proxy can effectively route requests to nodes that have less load. \\
+    Thanks to the clustering, we can have a unlimited number of slave instances, so that they can be in charge of handling read requests instead of having a single standalone server that handles everything.
+
+    \section{Conclusion}
+    In this project, we learned how to scale databases and implement cloud patterns using AWS.
+    We created multiple EC2 instances and set up a proxy server, and learned how to run benchmarks and test queries using various scripts and commands.
+    These skills are important for managing and optimizing database performance in the cloud.
+
+\end{document}
