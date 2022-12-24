@@ -43,7 +43,7 @@ run_sql_on_vm() {
   run_on_vm "sudo mysql -u root -e \"$1\""
 }
 
-# Copy a file to the VM via SCP
+# Copy a file to the VM via SFTP
 copy_to_vm() {
   sftp -i "$pem_path" "$username"@"$vm_address" <<< "put \"$1\" \"$2\""
 }
@@ -268,6 +268,7 @@ stop() {
     if [ "$vm_name" = "proxy" ]; then
       # Stop the proxy app
       curl -s -X POST "${vm_address}:3000/stop" || true
+      run_on_vm "sudo pkill -f nodemon"
     fi
     ;;
   esac
